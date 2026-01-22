@@ -6,7 +6,9 @@ No authentication - for local network use only
 
 import os
 import shutil
-from flask import Flask, request, send_file, send_from_directory, jsonify
+import time
+import queue
+from flask import Flask, request, send_file, send_from_directory, jsonify, Response
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -14,6 +16,9 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 # Configuration
 SHARE_FOLDER = os.path.join(os.path.dirname(__file__), 'shared_files')
 os.makedirs(SHARE_FOLDER, exist_ok=True)
+
+# SSE - Store client queues for broadcasting events
+client_queues = []
 
 
 def format_size(size):
@@ -41,11 +46,67 @@ def get_safe_path(subpath):
     return target
 
 
+def broadcast_change(event_type, path=''):
+    """Broadcast a change event to all connected SSE clients"""
+    message = f"event: {event_type}\ndata: {path}\n\n"
+
+    # Send to all connected clients
+    dead_queues = []
+    for client_queue in client_queues:
+        try:
+            client_queue.put_nowait(message)
+        except queue.Full:
+            # Queue is full, mark for removal
+            dead_queues.append(client_queue)
+
+    # Remove dead queues
+    for dead_queue in dead_queues:
+        client_queues.remove(dead_queue)
+
+
 # Serve the main page
 @app.route('/')
 def index():
     """Serve the main HTML page"""
     return send_from_directory('static', 'index.html')
+
+
+# SSE endpoint for real-time updates
+@app.route('/api/events')
+def events():
+    """Server-Sent Events stream for real-time file updates"""
+    def event_stream():
+        # Create a queue for this client
+        client_queue = queue.Queue(maxsize=10)
+        client_queues.append(client_queue)
+
+        try:
+            # Send initial connection message
+            yield "data: connected\n\n"
+
+            # Keep connection alive and send events
+            while True:
+                try:
+                    # Wait for events with timeout for keep-alive
+                    message = client_queue.get(timeout=30)
+                    yield message
+                except queue.Empty:
+                    # Send keep-alive comment every 30 seconds
+                    yield ": keep-alive\n\n"
+        except GeneratorExit:
+            # Client disconnected
+            pass
+        finally:
+            # Remove this client's queue
+            if client_queue in client_queues:
+                client_queues.remove(client_queue)
+
+    return Response(event_stream(), mimetype='text/event-stream',
+                    headers={
+                        'Cache-Control': 'no-cache',
+                        'X-Accel-Buffering': 'no',
+                        'Connection': 'keep-alive'
+                    })
 
 
 # API: List files in a directory
@@ -122,6 +183,10 @@ def upload_files(subpath=''):
                     file.save(file_path)
                     uploaded.append(filename)
 
+        # Broadcast change event to all connected clients
+        if uploaded:
+            broadcast_change('file_change', subpath)
+
         return jsonify({
             'success': True,
             'uploaded': uploaded,
@@ -172,9 +237,15 @@ def delete_item(subpath):
     try:
         if os.path.isfile(target_path):
             os.remove(target_path)
+            # Get the parent directory for the event
+            parent_path = os.path.dirname(subpath) if '/' in subpath else ''
+            broadcast_change('file_change', parent_path)
             return jsonify({'success': True, 'message': 'File deleted'})
         elif os.path.isdir(target_path):
             shutil.rmtree(target_path)
+            # Get the parent directory for the event
+            parent_path = os.path.dirname(subpath) if '/' in subpath else ''
+            broadcast_change('file_change', parent_path)
             return jsonify({'success': True, 'message': 'Folder deleted'})
         else:
             return jsonify({'error': 'Unknown item type'}), 400
