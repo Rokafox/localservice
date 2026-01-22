@@ -101,6 +101,18 @@ function displayFiles(items) {
             actions.appendChild(downloadBtn);
         }
 
+        const renameBtn = document.createElement('button');
+        renameBtn.className = 'btn-rename';
+        renameBtn.textContent = 'Rename';
+        renameBtn.onclick = () => renameItem(item.path, item.name);
+        actions.appendChild(renameBtn);
+
+        const moveBtn = document.createElement('button');
+        moveBtn.className = 'btn-move';
+        moveBtn.textContent = 'Move';
+        moveBtn.onclick = () => moveItem(item.path, item.name);
+        actions.appendChild(moveBtn);
+
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn-delete';
         deleteBtn.textContent = 'Delete';
@@ -272,6 +284,125 @@ async function deleteItem(path, name, isDir) {
 
     } catch (error) {
         alert(`Failed to delete ${itemType}: ${error.message}`);
+    }
+}
+
+// Rename a file or folder
+async function renameItem(path, currentName) {
+    const newName = prompt(`Rename "${currentName}" to:`, currentName);
+
+    if (!newName || newName === currentName) return;
+
+    // Basic validation
+    if (newName.trim() === '') {
+        alert('Name cannot be empty');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/rename/${path}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ new_name: newName })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Rename failed');
+        }
+
+        // Reload current directory
+        loadFiles(currentPath);
+
+    } catch (error) {
+        alert(`Failed to rename: ${error.message}`);
+    }
+}
+
+// Move a file or folder
+async function moveItem(path, name) {
+    // First, fetch the folder structure to let user choose destination
+    try {
+        const folders = await getFolderList();
+
+        // Create a selection dialog
+        let message = `Move "${name}" to:\n\n`;
+        message += '0. / (Root)\n';
+        folders.forEach((folder, index) => {
+            message += `${index + 1}. ${folder.path}\n`;
+        });
+        message += '\nEnter the number of the destination folder:';
+
+        const choice = prompt(message);
+
+        if (choice === null) return; // User cancelled
+
+        const choiceNum = parseInt(choice);
+
+        if (isNaN(choiceNum) || choiceNum < 0 || choiceNum > folders.length) {
+            alert('Invalid selection');
+            return;
+        }
+
+        // Get destination path
+        const destination = choiceNum === 0 ? '' : folders[choiceNum - 1].path;
+
+        // Don't move to the same location
+        const currentParent = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '';
+        if (destination === currentParent) {
+            alert('Item is already in that location');
+            return;
+        }
+
+        // Perform the move
+        const response = await fetch(`/api/move/${path}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ destination: destination })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Move failed');
+        }
+
+        // Reload current directory
+        loadFiles(currentPath);
+
+    } catch (error) {
+        alert(`Failed to move: ${error.message}`);
+    }
+}
+
+// Get list of all folders for move operation
+async function getFolderList(path = '', folders = []) {
+    try {
+        const response = await fetch(`/api/files/${path}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load folders');
+        }
+
+        // Add folders from this directory
+        for (const item of data.items) {
+            if (item.is_dir) {
+                folders.push({ name: item.name, path: item.path });
+                // Recursively get subfolders
+                await getFolderList(item.path, folders);
+            }
+        }
+
+        return folders;
+    } catch (error) {
+        console.error('Error loading folders:', error);
+        return folders;
     }
 }
 

@@ -300,6 +300,150 @@ def create_folder(subpath=''):
         return jsonify({'error': str(e)}), 500
 
 
+# API: Rename a file or folder
+@app.route('/api/rename/<path:subpath>', methods=['POST'])
+def rename_item(subpath):
+    """Rename a file or folder"""
+    target_path = get_safe_path(subpath)
+
+    if not target_path:
+        return jsonify({'error': 'Invalid path'}), 403
+
+    if not os.path.exists(target_path):
+        return jsonify({'error': 'Item not found'}), 404
+
+    # Don't allow renaming the root shared folder itself
+    if target_path == SHARE_FOLDER:
+        return jsonify({'error': 'Cannot rename root folder'}), 403
+
+    # Get new name from request
+    data = request.get_json()
+    if not data or 'new_name' not in data:
+        return jsonify({'error': 'New name is required'}), 400
+
+    new_name = secure_filename(data['new_name'])
+    if not new_name:
+        return jsonify({'error': 'Invalid name'}), 400
+
+    # Calculate new path
+    parent_dir = os.path.dirname(target_path)
+    new_path = os.path.join(parent_dir, new_name)
+
+    # Check if new path already exists
+    if os.path.exists(new_path):
+        return jsonify({'error': 'An item with that name already exists'}), 409
+
+    # If it's a folder, check depth constraints
+    if os.path.isdir(target_path):
+        # Get the parent path relative to SHARE_FOLDER
+        parent_rel_path = os.path.relpath(parent_dir, SHARE_FOLDER)
+        if parent_rel_path == '.':
+            parent_rel_path = ''
+
+        # Calculate new folder path
+        if parent_rel_path:
+            new_folder_rel_path = f"{parent_rel_path}/{new_name}"
+        else:
+            new_folder_rel_path = new_name
+
+        depth = get_folder_depth(new_folder_rel_path)
+        if depth > MAX_FOLDER_DEPTH:
+            return jsonify({
+                'error': f'Renaming would exceed maximum folder depth ({MAX_FOLDER_DEPTH})'
+            }), 400
+
+    try:
+        os.rename(target_path, new_path)
+        # Broadcast change to parent directory
+        parent_rel_path = os.path.relpath(parent_dir, SHARE_FOLDER)
+        if parent_rel_path == '.':
+            parent_rel_path = ''
+        broadcast_change('file_change', parent_rel_path)
+
+        return jsonify({
+            'success': True,
+            'message': 'Item renamed successfully',
+            'new_name': new_name
+        })
+    except PermissionError:
+        return jsonify({'error': 'Permission denied'}), 403
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# API: Move a file or folder
+@app.route('/api/move/<path:subpath>', methods=['POST'])
+def move_item(subpath):
+    """Move a file or folder to a different directory"""
+    source_path = get_safe_path(subpath)
+
+    if not source_path:
+        return jsonify({'error': 'Invalid source path'}), 403
+
+    if not os.path.exists(source_path):
+        return jsonify({'error': 'Source item not found'}), 404
+
+    # Don't allow moving the root shared folder itself
+    if source_path == SHARE_FOLDER:
+        return jsonify({'error': 'Cannot move root folder'}), 403
+
+    # Get destination from request
+    data = request.get_json()
+    if not data or 'destination' not in data:
+        return jsonify({'error': 'Destination path is required'}), 400
+
+    dest_subpath = data['destination']
+    dest_path = get_safe_path(dest_subpath)
+
+    if not dest_path:
+        return jsonify({'error': 'Invalid destination path'}), 403
+
+    if not os.path.exists(dest_path):
+        return jsonify({'error': 'Destination not found'}), 404
+
+    if not os.path.isdir(dest_path):
+        return jsonify({'error': 'Destination is not a directory'}), 400
+
+    # Get the item name
+    item_name = os.path.basename(source_path)
+    new_path = os.path.join(dest_path, item_name)
+
+    # Check if destination already has an item with this name
+    if os.path.exists(new_path):
+        return jsonify({'error': 'An item with that name already exists in the destination'}), 409
+
+    # Check if trying to move a folder into itself
+    if os.path.isdir(source_path):
+        if dest_path.startswith(source_path):
+            return jsonify({'error': 'Cannot move a folder into itself'}), 400
+
+        # Check depth constraints for the new location
+        new_rel_path = os.path.relpath(new_path, SHARE_FOLDER)
+        depth = get_folder_depth(new_rel_path)
+        if depth > MAX_FOLDER_DEPTH:
+            return jsonify({
+                'error': f'Moving would exceed maximum folder depth ({MAX_FOLDER_DEPTH})'
+            }), 400
+
+    try:
+        shutil.move(source_path, new_path)
+
+        # Broadcast change to both source and destination directories
+        source_parent = os.path.dirname(subpath) if '/' in subpath else ''
+        broadcast_change('file_change', source_parent)
+        broadcast_change('file_change', dest_subpath)
+
+        return jsonify({
+            'success': True,
+            'message': 'Item moved successfully',
+            'new_path': os.path.relpath(new_path, SHARE_FOLDER)
+        })
+    except PermissionError:
+        return jsonify({'error': 'Permission denied'}), 403
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # API: Delete a file or folder
 @app.route('/api/delete/<path:subpath>', methods=['DELETE'])
 def delete_item(subpath):
