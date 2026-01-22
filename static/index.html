@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local File Share</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏠 Local File Share</h1>
+            <div class="path-display" id="currentPath">/</div>
+        </header>
+
+        <nav class="breadcrumb" id="breadcrumb">
+            <a href="#" data-path="">Home</a>
+        </nav>
+
+        <section class="upload-section">
+            <h2>Upload Files</h2>
+            <form id="uploadForm" class="upload-form">
+                <input type="file" id="fileInput" name="files" multiple required>
+                <button type="submit">Upload</button>
+            </form>
+            <div id="uploadProgress" class="upload-progress hidden"></div>
+        </section>
+
+        <section class="files-section">
+            <h2>Files and Folders</h2>
+            <div id="fileList" class="file-list">
+                <div class="loading">Loading...</div>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

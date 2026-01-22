@@ -5,182 +5,15 @@ No authentication - for local network use only
 """
 
 import os
-from flask import Flask, render_template_string, request, send_file, redirect, url_for, abort
+import shutil
+from flask import Flask, request, send_file, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
-import mimetypes
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='')
 
 # Configuration
 SHARE_FOLDER = os.path.join(os.path.dirname(__file__), 'shared_files')
 os.makedirs(SHARE_FOLDER, exist_ok=True)
-
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Local File Share</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            background: #f5f5f5;
-            padding: 20px;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            padding: 30px;
-        }
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-        }
-        .path {
-            color: #666;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        .upload-section {
-            background: #f9f9f9;
-            padding: 20px;
-            border-radius: 6px;
-            margin-bottom: 30px;
-        }
-        .upload-form {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        input[type="file"] {
-            flex: 1;
-            min-width: 200px;
-            padding: 10px;
-            border: 2px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        button {
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-        }
-        button:hover {
-            background: #0056b3;
-        }
-        .file-list {
-            list-style: none;
-        }
-        .file-item, .folder-item {
-            display: flex;
-            align-items: center;
-            padding: 12px;
-            border-bottom: 1px solid #eee;
-            transition: background 0.2s;
-        }
-        .file-item:hover, .folder-item:hover {
-            background: #f9f9f9;
-        }
-        .icon {
-            margin-right: 12px;
-            font-size: 20px;
-        }
-        .name {
-            flex: 1;
-            color: #333;
-            text-decoration: none;
-        }
-        .folder-item .name {
-            color: #007bff;
-            font-weight: 500;
-        }
-        .size {
-            color: #666;
-            font-size: 13px;
-            margin-right: 15px;
-        }
-        .download-btn {
-            background: #28a745;
-            color: white;
-            padding: 6px 12px;
-            border-radius: 4px;
-            text-decoration: none;
-            font-size: 13px;
-        }
-        .download-btn:hover {
-            background: #218838;
-        }
-        .empty {
-            text-align: center;
-            color: #999;
-            padding: 40px;
-        }
-        .back-link {
-            display: inline-block;
-            margin-bottom: 20px;
-            color: #007bff;
-            text-decoration: none;
-        }
-        .back-link:hover {
-            text-decoration: underline;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🏠 Local File Share</h1>
-        <div class="path">{{ current_path or '/' }}</div>
-
-        {% if parent_path %}
-        <a href="{{ url_for('browse', subpath=parent_path) }}" class="back-link">⬅️ Back</a>
-        {% endif %}
-
-        <div class="upload-section">
-            <h2 style="margin-bottom: 15px; font-size: 18px;">Upload Files</h2>
-            <form method="POST" action="{{ url_for('upload', subpath=current_path or '') }}"
-                  enctype="multipart/form-data" class="upload-form">
-                <input type="file" name="file" multiple required>
-                <button type="submit">Upload</button>
-            </form>
-        </div>
-
-        <h2 style="margin-bottom: 15px; font-size: 18px;">Files and Folders</h2>
-
-        {% if items %}
-        <ul class="file-list">
-            {% for item in items %}
-                {% if item.is_dir %}
-                <li class="folder-item">
-                    <span class="icon">📁</span>
-                    <a href="{{ url_for('browse', subpath=item.path) }}" class="name">{{ item.name }}</a>
-                </li>
-                {% else %}
-                <li class="file-item">
-                    <span class="icon">📄</span>
-                    <span class="name">{{ item.name }}</span>
-                    <span class="size">{{ item.size }}</span>
-                    <a href="{{ url_for('download', subpath=item.path) }}"
-                       class="download-btn">Download</a>
-                </li>
-                {% endif %}
-            {% endfor %}
-        </ul>
-        {% else %}
-        <div class="empty">No files yet. Upload some files to get started!</div>
-        {% endif %}
-    </div>
-</body>
-</html>
-"""
 
 
 def format_size(size):
@@ -195,33 +28,42 @@ def format_size(size):
 def get_safe_path(subpath):
     """Get safe absolute path within SHARE_FOLDER"""
     if subpath:
-        # Remove leading slash and normalize
-        subpath = subpath.lstrip('/')
+        # Remove leading/trailing slashes and normalize
+        subpath = subpath.strip('/')
         target = os.path.normpath(os.path.join(SHARE_FOLDER, subpath))
     else:
         target = SHARE_FOLDER
 
-    # Ensure the path is within SHARE_FOLDER
+    # Ensure the path is within SHARE_FOLDER (prevent directory traversal)
     if not target.startswith(SHARE_FOLDER):
-        abort(403)
+        return None
 
     return target
 
 
+# Serve the main page
 @app.route('/')
-@app.route('/browse/')
-@app.route('/browse/<path:subpath>')
-def browse(subpath=''):
-    """Browse files and folders"""
+def index():
+    """Serve the main HTML page"""
+    return send_from_directory('static', 'index.html')
+
+
+# API: List files in a directory
+@app.route('/api/files/', methods=['GET'])
+@app.route('/api/files/<path:subpath>', methods=['GET'])
+def list_files(subpath=''):
+    """List files and folders in the specified directory"""
     target_path = get_safe_path(subpath)
 
+    if not target_path:
+        return jsonify({'error': 'Invalid path'}), 403
+
     if not os.path.exists(target_path):
-        abort(404)
+        return jsonify({'error': 'Path not found'}), 404
 
-    if os.path.isfile(target_path):
-        return redirect(url_for('download', subpath=subpath))
+    if not os.path.isdir(target_path):
+        return jsonify({'error': 'Not a directory'}), 400
 
-    # List directory contents
     items = []
     try:
         for entry in os.listdir(target_path):
@@ -236,58 +78,111 @@ def browse(subpath=''):
 
             if not item['is_dir']:
                 item['size'] = format_size(os.path.getsize(entry_path))
+            else:
+                item['size'] = ''
 
             items.append(item)
 
-        # Sort: folders first, then files, alphabetically
-        items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
     except PermissionError:
-        abort(403)
+        return jsonify({'error': 'Permission denied'}), 403
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    # Calculate parent path for back button
-    parent_path = None
-    if subpath:
-        parent_path = os.path.dirname(subpath)
-
-    return render_template_string(
-        HTML_TEMPLATE,
-        items=items,
-        current_path=subpath,
-        parent_path=parent_path
-    )
+    return jsonify({'items': items})
 
 
-@app.route('/download/<path:subpath>')
-def download(subpath):
+# API: Upload files
+@app.route('/api/upload/', methods=['POST'])
+@app.route('/api/upload/<path:subpath>', methods=['POST'])
+def upload_files(subpath=''):
+    """Upload one or more files"""
+    target_path = get_safe_path(subpath)
+
+    if not target_path:
+        return jsonify({'error': 'Invalid path'}), 403
+
+    if not os.path.exists(target_path):
+        return jsonify({'error': 'Path not found'}), 404
+
+    if not os.path.isdir(target_path):
+        return jsonify({'error': 'Not a directory'}), 400
+
+    if 'files' not in request.files:
+        return jsonify({'error': 'No files provided'}), 400
+
+    files = request.files.getlist('files')
+    uploaded = []
+
+    try:
+        for file in files:
+            if file.filename:
+                filename = secure_filename(file.filename)
+                if filename:  # Ensure filename is not empty after sanitization
+                    file_path = os.path.join(target_path, filename)
+                    file.save(file_path)
+                    uploaded.append(filename)
+
+        return jsonify({
+            'success': True,
+            'uploaded': uploaded,
+            'count': len(uploaded)
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# API: Download a file
+@app.route('/api/download/<path:subpath>')
+def download_file(subpath):
     """Download a file"""
     target_path = get_safe_path(subpath)
 
-    if not os.path.exists(target_path) or not os.path.isfile(target_path):
-        abort(404)
+    if not target_path:
+        return jsonify({'error': 'Invalid path'}), 403
 
-    return send_file(target_path, as_attachment=True)
+    if not os.path.exists(target_path):
+        return jsonify({'error': 'File not found'}), 404
+
+    if not os.path.isfile(target_path):
+        return jsonify({'error': 'Not a file'}), 400
+
+    try:
+        return send_file(target_path, as_attachment=True)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
-@app.route('/upload/', methods=['POST'])
-@app.route('/upload/<path:subpath>', methods=['POST'])
-def upload(subpath=''):
-    """Upload files"""
+# API: Delete a file or folder
+@app.route('/api/delete/<path:subpath>', methods=['DELETE'])
+def delete_item(subpath):
+    """Delete a file or folder"""
     target_path = get_safe_path(subpath)
 
-    if not os.path.exists(target_path) or not os.path.isdir(target_path):
-        abort(404)
+    if not target_path:
+        return jsonify({'error': 'Invalid path'}), 403
 
-    if 'file' not in request.files:
-        return redirect(url_for('browse', subpath=subpath))
+    if not os.path.exists(target_path):
+        return jsonify({'error': 'Item not found'}), 404
 
-    files = request.files.getlist('file')
+    # Don't allow deleting the root shared folder itself
+    if target_path == SHARE_FOLDER:
+        return jsonify({'error': 'Cannot delete root folder'}), 403
 
-    for file in files:
-        if file.filename:
-            filename = secure_filename(file.filename)
-            file.save(os.path.join(target_path, filename))
+    try:
+        if os.path.isfile(target_path):
+            os.remove(target_path)
+            return jsonify({'success': True, 'message': 'File deleted'})
+        elif os.path.isdir(target_path):
+            shutil.rmtree(target_path)
+            return jsonify({'success': True, 'message': 'Folder deleted'})
+        else:
+            return jsonify({'error': 'Unknown item type'}), 400
 
-    return redirect(url_for('browse', subpath=subpath))
+    except PermissionError:
+        return jsonify({'error': 'Permission denied'}), 403
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

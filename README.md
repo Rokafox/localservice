@@ -4,11 +4,13 @@ A simple, no-security web-based file sharing service for local networks.
 
 ## Features
 
-- 📁 Browse folders and files
+- 📁 Browse folders and files with breadcrumb navigation
 - ⬆️ Upload multiple files
 - ⬇️ Download files
+- 🗑️ Delete files and folders
 - 📱 Responsive design - works on phones, tablets, and computers
 - 🚀 Simple setup - no configuration needed
+- 🔌 REST API with separate frontend/backend architecture
 
 ## Installation
 
@@ -49,6 +51,21 @@ hostname -I
 ## Shared Files Location
 
 Files are stored in the `shared_files` directory (created automatically in the same folder as server.py).
+
+## Architecture
+
+The service uses a clean separation between frontend and backend:
+
+- **Backend (server.py)**: Flask-based REST API
+  - `/api/files/<path>` - List files and folders
+  - `/api/upload/<path>` - Upload files
+  - `/api/download/<path>` - Download files
+  - `/api/delete/<path>` - Delete files or folders
+
+- **Frontend (static/)**: HTML + CSS + JavaScript
+  - `index.html` - Main page structure
+  - `style.css` - Responsive styling
+  - `app.js` - API client and interactions
 
 ## Security Warning
 
