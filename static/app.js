@@ -1,11 +1,13 @@
 // Global state
 let currentPath = '';
 let eventSource = null;
+let canCreateFolder = true;
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
     loadFiles();
     setupUploadForm();
+    setupCreateFolderButton();
     setupSSE();
 });
 
@@ -31,6 +33,10 @@ async function loadFiles(path = '') {
         if (!response.ok) {
             throw new Error(data.error || 'Failed to load files');
         }
+
+        // Update folder creation capability
+        canCreateFolder = data.can_create_folder;
+        updateCreateFolderButton();
 
         displayFiles(data.items);
     } catch (error) {
@@ -136,6 +142,59 @@ function updateBreadcrumb(path) {
             };
             breadcrumb.appendChild(pathLink);
         });
+    }
+}
+
+// Setup create folder button
+function setupCreateFolderButton() {
+    const createFolderBtn = document.getElementById('createFolderBtn');
+    createFolderBtn.onclick = createFolder;
+}
+
+// Update create folder button state
+function updateCreateFolderButton() {
+    const createFolderBtn = document.getElementById('createFolderBtn');
+    if (canCreateFolder) {
+        createFolderBtn.disabled = false;
+        createFolderBtn.title = 'Create a new folder';
+    } else {
+        createFolderBtn.disabled = true;
+        createFolderBtn.title = 'Maximum folder depth reached';
+    }
+}
+
+// Create a new folder
+async function createFolder() {
+    const folderName = prompt('Enter folder name:');
+
+    if (!folderName) return;
+
+    // Basic validation
+    if (folderName.trim() === '') {
+        alert('Folder name cannot be empty');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/create-folder/${currentPath}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name: folderName })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to create folder');
+        }
+
+        // Reload current directory
+        loadFiles(currentPath);
+
+    } catch (error) {
+        alert(`Failed to create folder: ${error.message}`);
     }
 }
 

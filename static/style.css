@@ -74,9 +74,17 @@ header h1 {
     border-bottom: 1px solid #e9ecef;
 }
 
+.files-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    gap: 15px;
+}
+
 .upload-section h2, .files-section h2 {
     font-size: 18px;
-    margin-bottom: 15px;
+    margin-bottom: 0;
     color: #333;
 }
 
@@ -122,6 +130,20 @@ button:disabled {
     background: #adb5bd;
     cursor: not-allowed;
     transform: none;
+}
+
+.btn-create-folder {
+    background: #28a745;
+    white-space: nowrap;
+}
+
+.btn-create-folder:hover:not(:disabled) {
+    background: #218838;
+}
+
+.btn-create-folder:disabled {
+    background: #adb5bd;
+    cursor: not-allowed;
 }
 
 .upload-progress {
@@ -262,6 +284,11 @@ button:disabled {
 
     .upload-section, .files-section {
         padding: 20px;
+    }
+
+    .files-header {
+        flex-direction: column;
+        align-items: stretch;
     }
 
     .upload-form {
