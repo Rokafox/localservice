@@ -1,10 +1,12 @@
 // Global state
 let currentPath = '';
+let eventSource = null;
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
     loadFiles();
     setupUploadForm();
+    setupSSE();
 });
 
 // Load and display files
@@ -213,3 +215,57 @@ async function deleteItem(path, name, isDir) {
         alert(`Failed to delete ${itemType}: ${error.message}`);
     }
 }
+
+// Setup Server-Sent Events for real-time updates
+function setupSSE() {
+    // Close existing connection if any
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    // Create new EventSource connection
+    eventSource = new EventSource('/api/events');
+
+    eventSource.onopen = () => {
+        console.log('SSE connection established');
+    };
+
+    eventSource.onmessage = (event) => {
+        if (event.data === 'connected') {
+            console.log('SSE connected');
+            return;
+        }
+    };
+
+    // Listen for file_change events
+    eventSource.addEventListener('file_change', (event) => {
+        const changedPath = event.data;
+
+        // Reload if the change is in the current directory
+        // or if we're in the root and any change occurs
+        if (changedPath === currentPath ||
+            (currentPath === '' && changedPath === '') ||
+            changedPath.startsWith(currentPath)) {
+            console.log(`File change detected in: ${changedPath || 'root'}, reloading...`);
+            loadFiles(currentPath);
+        }
+    });
+
+    eventSource.onerror = (error) => {
+        console.error('SSE error:', error);
+        eventSource.close();
+
+        // Attempt to reconnect after 5 seconds
+        console.log('Attempting to reconnect in 5 seconds...');
+        setTimeout(() => {
+            setupSSE();
+        }, 5000);
+    };
+}
+
+// Clean up on page unload
+window.addEventListener('beforeunload', () => {
+    if (eventSource) {
+        eventSource.close();
+    }
+});
