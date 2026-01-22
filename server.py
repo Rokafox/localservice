@@ -17,6 +17,9 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 SHARE_FOLDER = os.path.join(os.path.dirname(__file__), 'shared_files')
 os.makedirs(SHARE_FOLDER, exist_ok=True)
 
+# Maximum folder depth (root is 0, so max depth 5 allows 5 levels of subfolders)
+MAX_FOLDER_DEPTH = 5
+
 # SSE - Store client queues for broadcasting events
 client_queues = []
 
@@ -44,6 +47,17 @@ def get_safe_path(subpath):
         return None
 
     return target
+
+
+def get_folder_depth(subpath):
+    """Calculate the depth of a folder path (root is 0)"""
+    if not subpath or subpath == '':
+        return 0
+    # Remove leading/trailing slashes and count path segments
+    clean_path = subpath.strip('/')
+    if not clean_path:
+        return 0
+    return len(clean_path.split('/'))
 
 
 def broadcast_change(event_type, path=''):
@@ -149,7 +163,16 @@ def list_files(subpath=''):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    return jsonify({'items': items})
+    # Calculate current depth and check if at max depth
+    current_depth = get_folder_depth(subpath)
+    can_create_folder = current_depth < MAX_FOLDER_DEPTH
+
+    return jsonify({
+        'items': items,
+        'current_depth': current_depth,
+        'max_depth': MAX_FOLDER_DEPTH,
+        'can_create_folder': can_create_folder
+    })
 
 
 # API: Upload files
@@ -214,6 +237,65 @@ def download_file(subpath):
 
     try:
         return send_file(target_path, as_attachment=True)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# API: Create a folder
+@app.route('/api/create-folder/', methods=['POST'])
+@app.route('/api/create-folder/<path:subpath>', methods=['POST'])
+def create_folder(subpath=''):
+    """Create a new folder in the specified directory"""
+    target_path = get_safe_path(subpath)
+
+    if not target_path:
+        return jsonify({'error': 'Invalid path'}), 403
+
+    if not os.path.exists(target_path):
+        return jsonify({'error': 'Parent directory not found'}), 404
+
+    if not os.path.isdir(target_path):
+        return jsonify({'error': 'Parent path is not a directory'}), 400
+
+    # Get folder name from request
+    data = request.get_json()
+    if not data or 'name' not in data:
+        return jsonify({'error': 'Folder name is required'}), 400
+
+    folder_name = secure_filename(data['name'])
+    if not folder_name:
+        return jsonify({'error': 'Invalid folder name'}), 400
+
+    # Calculate depth of the new folder
+    if subpath:
+        new_folder_path = f"{subpath}/{folder_name}"
+    else:
+        new_folder_path = folder_name
+
+    depth = get_folder_depth(new_folder_path)
+
+    # Check depth limit
+    if depth > MAX_FOLDER_DEPTH:
+        return jsonify({
+            'error': f'Maximum folder depth ({MAX_FOLDER_DEPTH}) exceeded. Cannot create folder at depth {depth}.'
+        }), 400
+
+    # Create the folder
+    new_folder_full_path = os.path.join(target_path, folder_name)
+
+    if os.path.exists(new_folder_full_path):
+        return jsonify({'error': 'Folder already exists'}), 409
+
+    try:
+        os.makedirs(new_folder_full_path)
+        # Broadcast change event
+        broadcast_change('file_change', subpath)
+        return jsonify({
+            'success': True,
+            'message': 'Folder created successfully',
+            'name': folder_name,
+            'path': new_folder_path
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
