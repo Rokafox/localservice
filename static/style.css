@@ -208,14 +208,16 @@ button:disabled {
 .actions {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
 }
 
-.btn-download, .btn-delete {
+.btn-download, .btn-delete, .btn-rename, .btn-move {
     padding: 6px 12px;
     border-radius: 4px;
     text-decoration: none;
     font-size: 13px;
     transition: all 0.2s;
+    white-space: nowrap;
 }
 
 .btn-download {
@@ -225,6 +227,28 @@ button:disabled {
 
 .btn-download:hover {
     background: #218838;
+}
+
+.btn-rename {
+    background: #667eea;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-rename:hover {
+    background: #5568d3;
+}
+
+.btn-move {
+    background: #f39c12;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-move:hover {
+    background: #e67e22;
 }
 
 .btn-delete {
