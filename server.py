@@ -17,6 +17,9 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 SHARE_FOLDER = os.path.join(os.path.dirname(__file__), 'shared_files')
 os.makedirs(SHARE_FOLDER, exist_ok=True)
 
+# Allow unlimited upload size (no content length restriction)
+app.config['MAX_CONTENT_LENGTH'] = None
+
 # Maximum folder depth (root is 0, so max depth 5 allows 5 levels of subfolders)
 MAX_FOLDER_DEPTH = 5
 
@@ -175,11 +178,15 @@ def list_files(subpath=''):
     })
 
 
+# Upload chunk size: 64KB for streaming writes
+UPLOAD_CHUNK_SIZE = 64 * 1024
+
+
 # API: Upload files
 @app.route('/api/upload/', methods=['POST'])
 @app.route('/api/upload/<path:subpath>', methods=['POST'])
 def upload_files(subpath=''):
-    """Upload one or more files"""
+    """Upload one or more files with streaming write and size verification"""
     target_path = get_safe_path(subpath)
 
     if not target_path:
@@ -196,6 +203,7 @@ def upload_files(subpath=''):
 
     files = request.files.getlist('files')
     uploaded = []
+    errors = []
 
     try:
         for file in files:
@@ -203,18 +211,50 @@ def upload_files(subpath=''):
                 filename = secure_filename(file.filename)
                 if filename:  # Ensure filename is not empty after sanitization
                     file_path = os.path.join(target_path, filename)
-                    file.save(file_path)
+
+                    # Stream write in chunks to handle large files reliably
+                    bytes_written = 0
+                    try:
+                        with open(file_path, 'wb') as f:
+                            while True:
+                                chunk = file.stream.read(UPLOAD_CHUNK_SIZE)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                bytes_written += len(chunk)
+                            f.flush()
+                            os.fsync(f.fileno())
+                    except Exception as write_error:
+                        # Clean up partial file on write failure
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        errors.append(f"{filename}: write failed - {str(write_error)}")
+                        continue
+
+                    # Verify the file was written completely
+                    actual_size = os.path.getsize(file_path)
+                    if actual_size != bytes_written:
+                        os.remove(file_path)
+                        errors.append(f"{filename}: size verification failed (expected {bytes_written}, got {actual_size})")
+                        continue
+
                     uploaded.append(filename)
 
         # Broadcast change event to all connected clients
         if uploaded:
             broadcast_change('file_change', subpath)
 
-        return jsonify({
-            'success': True,
+        result = {
+            'success': len(errors) == 0,
             'uploaded': uploaded,
             'count': len(uploaded)
-        })
+        }
+        if errors:
+            result['errors'] = errors
+            if not uploaded:
+                return jsonify(result), 500
+
+        return jsonify(result)
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

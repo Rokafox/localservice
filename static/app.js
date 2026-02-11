@@ -210,53 +210,160 @@ async function createFolder() {
     }
 }
 
+// Format bytes to human-readable size
+function formatSize(bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let unitIndex = 0;
+    let size = bytes;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
+    return size.toFixed(1) + ' ' + units[unitIndex];
+}
+
+// Format seconds to human-readable time
+function formatTime(seconds) {
+    if (seconds < 60) return Math.round(seconds) + 's';
+    if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + Math.round(seconds % 60) + 's';
+    return Math.floor(seconds / 3600) + 'h ' + Math.floor((seconds % 3600) / 60) + 'm';
+}
+
+// Current upload XHR (for cancel support)
+let currentUploadXhr = null;
+
 // Setup upload form
 function setupUploadForm() {
     const form = document.getElementById('uploadForm');
     const fileInput = document.getElementById('fileInput');
     const progress = document.getElementById('uploadProgress');
 
-    form.onsubmit = async (e) => {
+    form.onsubmit = (e) => {
         e.preventDefault();
 
         const files = fileInput.files;
         if (files.length === 0) return;
 
         const formData = new FormData();
+        let totalSize = 0;
         for (let file of files) {
             formData.append('files', file);
+            totalSize += file.size;
         }
 
-        try {
-            progress.textContent = 'Uploading...';
-            progress.className = 'upload-progress';
+        // Show progress bar
+        progress.className = 'upload-progress';
+        progress.innerHTML =
+            '<div class="progress-info">' +
+                '<span class="progress-text">Uploading ' + files.length + ' file(s)...</span>' +
+                '<span class="progress-percent">0%</span>' +
+            '</div>' +
+            '<div class="progress-bar-track">' +
+                '<div class="progress-bar-fill" style="width: 0%"></div>' +
+            '</div>' +
+            '<div class="progress-details">' +
+                '<span class="progress-transferred">0 B / ' + formatSize(totalSize) + '</span>' +
+                '<span class="progress-speed"></span>' +
+            '</div>' +
+            '<button type="button" class="btn-cancel-upload" onclick="cancelUpload()">Cancel</button>';
 
-            const response = await fetch(`/api/upload/${currentPath}`, {
-                method: 'POST',
-                body: formData
-            });
+        const xhr = new XMLHttpRequest();
+        currentUploadXhr = xhr;
+        const startTime = Date.now();
 
-            const data = await response.json();
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+                const percent = Math.round((event.loaded / event.total) * 100);
+                const elapsed = (Date.now() - startTime) / 1000;
+                const speed = elapsed > 0 ? event.loaded / elapsed : 0;
+                const remaining = speed > 0 ? (event.total - event.loaded) / speed : 0;
 
-            if (!response.ok) {
-                throw new Error(data.error || 'Upload failed');
+                progress.querySelector('.progress-bar-fill').style.width = percent + '%';
+                progress.querySelector('.progress-percent').textContent = percent + '%';
+                progress.querySelector('.progress-transferred').textContent =
+                    formatSize(event.loaded) + ' / ' + formatSize(event.total);
+
+                if (elapsed > 0.5) {
+                    let speedText = formatSize(speed) + '/s';
+                    if (percent < 100) {
+                        speedText += ' - ' + formatTime(remaining) + ' remaining';
+                    }
+                    progress.querySelector('.progress-speed').textContent = speedText;
+                }
+
+                if (percent === 100) {
+                    progress.querySelector('.progress-text').textContent = 'Processing on server...';
+                    progress.querySelector('.progress-speed').textContent = '';
+                    const cancelBtn = progress.querySelector('.btn-cancel-upload');
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                }
             }
+        };
 
-            progress.textContent = `Successfully uploaded ${files.length} file(s)`;
-            progress.className = 'upload-progress success';
+        xhr.onload = () => {
+            currentUploadXhr = null;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                let data;
+                try { data = JSON.parse(xhr.responseText); } catch(e) { data = {}; }
+                const count = data.count || files.length;
+                progress.innerHTML =
+                    '<div class="progress-info">' +
+                        '<span class="progress-text">Successfully uploaded ' + count + ' file(s)</span>' +
+                    '</div>' +
+                    '<div class="progress-bar-track">' +
+                        '<div class="progress-bar-fill complete" style="width: 100%"></div>' +
+                    '</div>';
+                progress.className = 'upload-progress success';
+                fileInput.value = '';
+                setTimeout(() => {
+                    progress.className = 'upload-progress hidden';
+                    loadFiles(currentPath);
+                }, 2000);
+            } else {
+                let errorMsg = 'Upload failed';
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    errorMsg = data.error || errorMsg;
+                } catch(e) {}
+                progress.innerHTML =
+                    '<div class="progress-info">' +
+                        '<span class="progress-text">' + errorMsg + '</span>' +
+                    '</div>';
+                progress.className = 'upload-progress error';
+            }
+        };
 
-            // Clear input and reload
-            fileInput.value = '';
+        xhr.onerror = () => {
+            currentUploadXhr = null;
+            progress.innerHTML =
+                '<div class="progress-info">' +
+                    '<span class="progress-text">Upload failed: Network error</span>' +
+                '</div>';
+            progress.className = 'upload-progress error';
+        };
+
+        xhr.onabort = () => {
+            currentUploadXhr = null;
+            progress.innerHTML =
+                '<div class="progress-info">' +
+                    '<span class="progress-text">Upload cancelled</span>' +
+                '</div>';
+            progress.className = 'upload-progress error';
             setTimeout(() => {
                 progress.className = 'upload-progress hidden';
-                loadFiles(currentPath);
             }, 2000);
+        };
 
-        } catch (error) {
-            progress.textContent = `Upload failed: ${error.message}`;
-            progress.className = 'upload-progress error';
-        }
+        xhr.open('POST', '/api/upload/' + currentPath);
+        xhr.send(formData);
     };
+}
+
+// Cancel ongoing upload
+function cancelUpload() {
+    if (currentUploadXhr) {
+        currentUploadXhr.abort();
+    }
 }
 
 // Delete a file or folder
