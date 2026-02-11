@@ -527,8 +527,8 @@ if __name__ == '__main__':
     print("Local File Share Service")
     print("=" * 60)
     print(f"Shared folder: {SHARE_FOLDER}")
-    print("Starting server on http://0.0.0.0:8080")
-    print("Access from other devices using: http://YOUR_IP:8080")
+    print("Starting server on http://0.0.0.0:40000")
+    print("Access from other devices using: http://YOUR_IP:40000")
     print("=" * 60)
 
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=40000, debug=True)
